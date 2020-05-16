@@ -248,24 +248,6 @@ class TickerBase():
     # ------------------------
 
     def _get_fundamentals(self, kind=None, proxy=None):
-        def cleanup(data):
-            df = _pd.DataFrame(data).drop(columns=['maxAge'])
-            for col in df.columns:
-                df[col] = _np.where(
-                    df[col].astype(str) == '-', _np.nan, df[col])
-
-            df.set_index('endDate', inplace=True)
-            try:
-                df.index = _pd.to_datetime(df.index, unit='s')
-            except ValueError:
-                df.index = _pd.to_datetime(df.index)
-            df = df.T
-            df.columns.name = ''
-            df.index.name = 'Breakdown'
-
-            df.index = utils.camel2title(df.index)
-            return df
-
         # setup proxy in requests format
         if proxy is not None:
             if isinstance(proxy, dict) and "https" in proxy:
@@ -278,37 +260,6 @@ class TickerBase():
         # get info and sustainability
         url = '%s/%s' % (self._scrape_url, self.ticker)
         data = utils.get_json(url, proxy)
-
-        # holders
-        url = "{}/{}/holders".format(self._scrape_url, self.ticker)
-        holders = _pd.read_html(url)
-        self._major_holders = holders[0]
-        try:
-            self._institutional_holders = holders[1]
-        except Exception:
-            self._institutional_holders = []
-        if 'Date Reported' in self._institutional_holders:
-            self._institutional_holders['Date Reported'] = _pd.to_datetime(
-                self._institutional_holders['Date Reported'])
-        if '% Out' in self._institutional_holders:
-            self._institutional_holders['% Out'] = self._institutional_holders[
-                '% Out'].str.replace('%', '').astype(float)/100
-
-        # sustainability
-        d = {}
-        if isinstance(data.get('esgScores'), dict):
-            for item in data['esgScores']:
-                if not isinstance(data['esgScores'][item], (dict, list)):
-                    d[item] = data['esgScores'][item]
-
-            s = _pd.DataFrame(index=[0], data=d)[-1:].T
-            s.columns = ['Value']
-            s.index.name = '%.f-%.f' % (
-                s[s.index == 'ratingYear']['Value'].values[0],
-                s[s.index == 'ratingMonth']['Value'].values[0])
-
-            self._sustainability = s[~s.index.isin(
-                ['maxAge', 'ratingYear', 'ratingMonth'])]
 
         # info (be nice to python 2)
         self._info = {}
@@ -339,51 +290,6 @@ class TickerBase():
         except Exception:
             pass
 
-        # analyst recommendations
-        try:
-            rec = _pd.DataFrame(
-                data['upgradeDowngradeHistory']['history'])
-            rec['earningsDate'] = _pd.to_datetime(
-                rec['epochGradeDate'], unit='s')
-            rec.set_index('earningsDate', inplace=True)
-            rec.index.name = 'Date'
-            rec.columns = utils.camel2title(rec.columns)
-            self._recommendations = rec[[
-                'Firm', 'To Grade', 'From Grade', 'Action']].sort_index()
-        except Exception:
-            pass
-
-        # get fundamentals
-        data = utils.get_json(url+'/financials', proxy)
-
-        # generic patterns
-        for key in (
-            (self._cashflow, 'cashflowStatement', 'cashflowStatements'),
-            (self._balancesheet, 'balanceSheet', 'balanceSheetStatements'),
-            (self._financials, 'incomeStatement', 'incomeStatementHistory')
-        ):
-
-            item = key[1] + 'History'
-            if isinstance(data.get(item), dict):
-                key[0]['yearly'] = cleanup(data[item][key[2]])
-
-            item = key[1]+'HistoryQuarterly'
-            if isinstance(data.get(item), dict):
-                key[0]['quarterly'] = cleanup(data[item][key[2]])
-
-        # earnings
-        if isinstance(data.get('earnings'), dict):
-            earnings = data['earnings']['financialsChart']
-            df = _pd.DataFrame(earnings['yearly']).set_index('date')
-            df.columns = utils.camel2title(df.columns)
-            df.index.name = 'Year'
-            self._earnings['yearly'] = df
-
-            df = _pd.DataFrame(earnings['quarterly']).set_index('date')
-            df.columns = utils.camel2title(df.columns)
-            df.index.name = 'Quarter'
-            self._earnings['quarterly'] = df
-
         self._fundamentals = True
 
     def get_recommendations(self, proxy=None, as_dict=False, *args, **kwargs):
@@ -396,20 +302,6 @@ class TickerBase():
     def get_calendar(self, proxy=None, as_dict=False, *args, **kwargs):
         self._get_fundamentals(proxy)
         data = self._calendar
-        if as_dict:
-            return data.to_dict()
-        return data
-
-    def get_major_holders(self, proxy=None, as_dict=False, *args, **kwargs):
-        self._get_fundamentals(proxy)
-        data = self._major_holders
-        if as_dict:
-            return data.to_dict()
-        return data
-
-    def get_institutional_holders(self, proxy=None, as_dict=False, *args, **kwargs):
-        self._get_fundamentals(proxy)
-        data = self._institutional_holders
         if as_dict:
             return data.to_dict()
         return data
